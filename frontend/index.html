@@ -15,7 +15,12 @@
           <img class="brand-mark" src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcShi1ZGHPZJ0tlua41UfrKeHXvcvGIg1c7msaZK7dNAhw&amp;s=10" alt="" aria-hidden="true">
           <span>Poké<span class="brand-accent">AI</span></span>
         </a>
-        <span class="service-status"><span class="status-dot"></span> Pokémon assistant</span>
+        <div class="topbar-actions">
+          <span class="service-status"><span class="status-dot"></span> Pokémon assistant</span>
+          <button class="architecture-trigger" id="architecture-open" type="button" aria-haspopup="dialog" aria-controls="architecture-modal">
+            How it works
+          </button>
+        </div>
       </header>
 
       <section class="chat-layout" aria-label="Pokémon assistant chat">
@@ -51,5 +56,92 @@
         <p class="disclaimer">Poké AI can make mistakes. Double-check important info with a Pokédex.</p>
       </section>
     </main>
+
+    <dialog class="architecture-modal" id="architecture-modal" aria-labelledby="architecture-title">
+      <div class="architecture-content">
+        <header class="architecture-heading">
+          <div>
+            <p class="architecture-kicker">UNDER THE POKÉ BALL</p>
+            <h2 id="architecture-title">How Poké AI works</h2>
+            <p class="architecture-lede">An agentic generative AI system that routes questions to data and task-specific tools, then turns their results into a useful answer.</p>
+          </div>
+          <button class="architecture-close" id="architecture-close" type="button" aria-label="Close architecture details">×</button>
+        </header>
+
+        <section class="architecture-overview" aria-labelledby="architecture-overview-title">
+          <h3 id="architecture-overview-title">The shared architecture</h3>
+          <ol class="architecture-flow">
+            <li><span class="flow-number">01</span><div><strong>You ask</strong><p>The browser sends your message and recent conversation history to the FastAPI <code>/chat</code> endpoint.</p></div></li>
+            <li><span class="flow-number">02</span><div><strong>The agent decides</strong><p>Qwen3:4b (served by Ollama) reads the request and available function descriptions, then chooses whether to answer directly or call a relevant tool.</p></div></li>
+            <li><span class="flow-number">03</span><div><strong>Tools ground the answer</strong><p>Python executes the requested data lookup or task logic. Results are returned to the model as context; the model can request more tool work before it responds.</p></div></li>
+            <li><span class="flow-number">04</span><div><strong>The UI renders it</strong><p>The model writes the user-facing text. The API also sends structured task data when needed, so the browser can render Pokémon cards, teams, or an interactive battle.</p></div></li>
+          </ol>
+          <p class="architecture-note"><strong>Why this is agentic:</strong> the model chooses and sequences tools based on the request. It does not calculate every fact itself: deterministic code and retrieved data provide grounding, while the model interprets the request and explains the result.</p>
+        </section>
+
+        <section class="tool-directory" aria-labelledby="tool-directory-title">
+          <div class="tool-directory-heading">
+            <div>
+              <p class="architecture-kicker">THE AGENT'S TOOLBOX</p>
+              <h3 id="tool-directory-title">Tools the agent can call</h3>
+            </div>
+            <p>Qwen selects the tools that fit your request; not every question needs every tool.</p>
+          </div>
+          <ul class="tool-grid">
+            <li><code class="tool-name">get_pokemon</code><p>Fetch a Pokémon’s types, abilities, measurements, base stats, and artwork from PokéAPI.</p></li>
+            <li><code class="tool-name">analyze_team_coverage</code><p>Measure a selected team’s defensive weaknesses and missing offensive type coverage.</p></li>
+            <li><code class="tool-name">simulate_battle</code><p>Prepare two Pokémon’s sprites, stats, move sets, and estimated damage for a battle.</p></li>
+            <li><code class="tool-name">search_knowledge</code><p>Retrieve relevant passages from the local Pokémon knowledge base.</p></li>
+            <li><code class="tool-name">web_search</code><p>Find current or external Pokémon information on the internet.</p></li>
+            <li><code class="tool-name">fetch_web_page</code><p>Read a selected webpage in detail after finding it in web search.</p></li>
+          </ul>
+        </section>
+
+        <div class="architecture-pipelines">
+          <section class="pipeline-card" aria-labelledby="lookup-title">
+            <span class="pipeline-icon" aria-hidden="true">📘</span>
+            <h3 id="lookup-title">1. Pokémon lookup · PokéAPI</h3>
+            <p class="pipeline-summary">For a question about a Pokémon’s known facts, the agent can call the Pokémon data tool.</p>
+            <ol>
+              <li>For a factual lookup, the agent calls <code class="tool-name">get_pokemon</code> with the Pokémon’s name. The backend normalizes it, resolves the PokéAPI identifier, and fetches its record.</li>
+              <li>The tool returns structured facts—types, abilities, measurements, base stats, and artwork. Those results ground the model’s answer.</li>
+              <li>If the question needs locally stored context or current external facts, the agent can also use <code class="tool-name">search_knowledge</code> or <code class="tool-name">web_search</code> followed by <code class="tool-name">fetch_web_page</code>.</li>
+            </ol>
+            <p class="pipeline-footnote">PokéAPI and retrieved sources supply the evidence; the language model supplies the conversational explanation.</p>
+          </section>
+
+          <section class="pipeline-card" aria-labelledby="team-title">
+            <span class="pipeline-icon" aria-hidden="true">🧭</span>
+            <h3 id="team-title">2. Team builder · coverage + recommendations</h3>
+            <p class="pipeline-summary">The model keeps the Pokémon you chose, asks the analyzer to assess that core, then recommends additions.</p>
+            <ol>
+              <li>The agent calls <code class="tool-name">analyze_team_coverage</code> with only the Pokémon you selected—not names it plans to recommend.</li>
+              <li>The analyzer fetches their data and calculates shared defensive weaknesses, possible resistances, and uncovered offensive types using the type chart.</li>
+              <li>The model uses those results to recommend exactly enough distinct additions to reach six, without replacing your selected Pokémon.</li>
+              <li>A follow-up extraction step resolves the recommended names to Pokémon data and sprites. The API checks that all six team members have displayable sprites before returning the structured team.</li>
+            </ol>
+            <p class="pipeline-footnote">Coverage calculations are deterministic; choosing complementary additions and explaining the roster are generative steps grounded in those results.</p>
+          </section>
+
+          <section class="pipeline-card" aria-labelledby="battle-title">
+            <span class="pipeline-icon" aria-hidden="true">⚔️</span>
+            <h3 id="battle-title">3. Battle simulator · prepared by data, played in the UI</h3>
+            <p class="pipeline-summary">The agent prepares two Pokémon for battle; the browser animates a deliberately simplified matchup.</p>
+            <ol>
+              <li>The agent calls <code class="tool-name">simulate_battle</code> with both names. The backend fetches their stats and battle sprites from PokéAPI.</li>
+              <li>For each Pokémon, it checks up to 25 learned moves, retrieves damaging move details, estimates damage at level 50, and picks up to four strong moves, favoring distinct move types.</li>
+              <li>The API returns names, sprites, HP, and precomputed move damage as structured battle data. The model’s text is constrained to a short introduction.</li>
+              <li>When you press <em>Start battle</em>, the browser applies each Pokémon’s strongest precomputed damage simultaneously every 1.5 seconds, updates HP bars, and declares the result when someone faints.</li>
+            </ol>
+            <p class="pipeline-footnote">This is an illustrative matchup, not a full Pokémon game engine: playback does not choose moves per turn or model every battle mechanic.</p>
+          </section>
+        </div>
+
+        <footer class="architecture-footer">
+          <span>Poké AI · Agent orchestration, grounded data, playful results</span>
+          <button class="architecture-dismiss" id="architecture-dismiss" type="button">Back to chat</button>
+        </footer>
+      </div>
+    </dialog>
   </body>
 </html>

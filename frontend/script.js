@@ -5,6 +5,10 @@ const conversation = document.querySelector("#conversation");
 const welcome = document.querySelector("#welcome");
 const errorMessage = document.querySelector("#error-message");
 const assistantLogoUrl = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcShi1ZGHPZJ0tlua41UfrKeHXvcvGIg1c7msaZK7dNAhw&s=10";
+const architectureModal = document.querySelector("#architecture-modal");
+const architectureOpen = document.querySelector("#architecture-open");
+const architectureClose = document.querySelector("#architecture-close");
+const architectureDismiss = document.querySelector("#architecture-dismiss");
 
 const history = [];
 let isSending = false;
@@ -45,7 +49,7 @@ function addImage(container, url, alt, className) {
 }
 
 function cropTransparentSprite(image) {
-  if (!image.naturalWidth || !image.naturalHeight || !image.isConnected) return;
+  if (!image.naturalWidth || !image.naturalHeight) return;
 
   try {
     const canvas = document.createElement("canvas");
@@ -89,8 +93,10 @@ function cropTransparentSprite(image) {
 }
 
 function addBattleSprite(container, url, alt) {
-  const image = addImage(container, url, alt, "battle-sprite");
+  const spriteArea = element("div", "battle-sprite-area");
+  const image = addImage(spriteArea, url, alt, "battle-sprite");
   if (!image) return;
+  container.append(spriteArea);
   if (image.complete) cropTransparentSprite(image);
   else image.addEventListener("load", () => cropTransparentSprite(image), { once: true });
 }
@@ -348,8 +354,8 @@ function renderBattle(container, data) {
 
       intervalId = window.setInterval(() => {
         const [first, second] = fighters;
-        first.currentHp = Math.max(0, first.currentHp - second.maxDamage);
-        second.currentHp = Math.max(0, second.currentHp - first.maxDamage);
+        first.currentHp = Math.max(0, first.currentHp - second.maxDamage / 2);
+        second.currentHp = Math.max(0, second.currentHp - first.maxDamage / 2);
         fighters.forEach(updateHealth);
 
         const firstFainted = first.currentHp === 0;
@@ -362,9 +368,14 @@ function renderBattle(container, data) {
         window.clearInterval(intervalId);
         intervalId = undefined;
         startButton.textContent = "Battle complete";
-        status.textContent = firstFainted && secondFainted
-          ? "It's a draw! Both Pokémon fainted."
-          : `${firstFainted ? second.name : first.name} wins!`;
+        if (firstFainted && secondFainted) {
+          status.textContent = "It's a draw! Both Pokémon fainted.";
+        } else {
+          const winner = firstFainted ? second.name : first.name;
+          const capitalizedWinner = winner.charAt(0).toUpperCase() + winner.slice(1);
+          status.textContent = `${capitalizedWinner} wins!`;
+          status.classList.add("battle-winner");
+        }
       }, 1500);
     });
 
@@ -483,4 +494,11 @@ document.querySelectorAll("[data-prompt]").forEach((button) => {
     resizeInput();
     form.requestSubmit();
   });
+});
+
+architectureOpen.addEventListener("click", () => architectureModal.showModal());
+architectureClose.addEventListener("click", () => architectureModal.close());
+architectureDismiss.addEventListener("click", () => architectureModal.close());
+architectureModal.addEventListener("click", (event) => {
+  if (event.target === architectureModal) architectureModal.close();
 });
