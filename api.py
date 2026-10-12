@@ -159,7 +159,11 @@ You have access to:
 5. Team builder and coverage analyzer
    - Use analyze_team_coverage when the user wants to build a team, 
      analyze an existing team, or fill remaining slots on a roster.
-   - Pass the full list of candidate team members as an array of strings.
+   - For team building, pass only Pokémon the user explicitly selected as
+     the starting core. Never invent additions for the tool arguments.
+   - Keep every Pokémon the user chose; recommend additions, not replacements,
+     unless the user explicitly asks for swaps.
+   - Add exactly enough Pokémon to bring a partial roster to six.
 
 6. Battle simulator
    - Use simulate_battle when the user asks to simulate a fight or battle 
@@ -319,9 +323,9 @@ the first result.
         "function": {
             "name": "analyze_team_coverage",
             "description": (
-                "Analyze a list of Pokémon names (up to 6) for defensive weaknesses "
-                "and offensive type coverage. Use this whenever the user asks to build "
-                "a team, evaluate a team, or suggest team members."
+                "Analyze up to 6 Pokémon explicitly selected by the user for defensive "
+                "weaknesses and offensive type coverage. For a team-building request, "
+                "pass only the user's starting Pokémon, not proposed additions."
             ),
             "parameters": {
                 "type": "object",
@@ -533,9 +537,10 @@ Do not answer the user's question.
         result = analyze_team_coverage(pokemon_names)
         
         if "error" not in result:
-            # Pass classification and the array of animated SVGs via context
+            # Keep the selected members and coverage facts for answer rendering.
             context["response_category"] = "team_analysis"
             context["team_sprites"] = result.get("team_members")
+            context["team_analysis"] = result
             
         return result
 
@@ -746,7 +751,26 @@ def chat_endpoint(request: ChatRequest):
             "<pokemon>!'"
         )
 
-    final_response = generate_final_answer(messages, battle_instruction)
+    team_instruction = None
+    if context.get("response_category") == "team_analysis":
+        analysis = context["team_analysis"]
+        current_members = analysis.get("team_members", [])
+        slots_remaining = max(0, 6 - analysis.get("team_size", len(current_members)))
+        selected_names = ", ".join(member["name"] for member in current_members)
+        team_instruction = (
+            f"The user-selected starting Pokémon are: {selected_names}. Keep all of them; "
+            "do not replace or remove any. "
+            f"Recommend exactly {slots_remaining} additional distinct Pokémon so the final "
+            "roster contains six Pokémon total. Do not say the team is full unless six "
+            "Pokémon were provided. Clearly list the complete six-Pokémon roster and "
+            "briefly explain how any additions complement the selected core. Use the "
+            "coverage analysis, and do not claim that every uncovered type is covered."
+        )
+
+    final_instruction = "\n".join(
+        instruction for instruction in (battle_instruction, team_instruction) if instruction
+    ) or None
+    final_response = generate_final_answer(messages, final_instruction)
     final_text = final_response.message.content
     logger.info("Final answer generated response_chars=%d", len(final_text))
 
@@ -769,39 +793,75 @@ def chat_endpoint(request: ChatRequest):
             result["image_url"] = context.get("pokemon_image")
             
         elif context["response_category"] == "team_analysis":
-            # Extract the full final team (inputs + suggestions)
-            logger.info("Extracting final team members for sprite display")
-            extraction_messages = [
-                {
-                    "role": "system",
-                    "content": (
-                        "Extract the complete final team of Pokémon from the text. "
-                        "Include both the original team and all suggested additions. "
-                        "Return ONLY a comma-separated list of their names. "
-                        "Do not write anything else, no formatting."
-                    )
-                },
-                {
-                    "role": "user",
-                    "content": final_text
-                }
-            ]
-            
-            extracted = call_model("team member extraction", extraction_messages)
-            final_names = [n.strip() for n in extracted.message.content.split(",") if n.strip()]
-            logger.info("Final team extraction completed member_count=%d", len(final_names))
-            
-            full_team_sprites = []
-            for n in final_names:
-                p = get_pokemon(n)
-                if p and p.get("showdown_sprite"):
+            analysis = context["team_analysis"]
+            current_members = analysis.get("team_members", [])
+            slots_remaining = max(0, 6 - analysis.get("team_size", len(current_members)))
+            full_team_sprites = list(current_members)
+
+            if slots_remaining:
+                logger.info("Extracting suggested team additions count=%d", slots_remaining)
+                selected_names = ", ".join(member["name"] for member in current_members)
+                extraction_messages = [
+                    {
+                        "role": "system",
+                        "content": (
+                            f"Extract exactly {slots_remaining} distinct Pokémon names that "
+                            "the assistant recommended as additions in the response. Do not "
+                            f"return any of these already-selected Pokémon: {selected_names}. "
+                            "Return only a comma-separated list of names actually present in "
+                            "the response. Do not include explanations or formatting."
+                        )
+                    },
+                    {
+                        "role": "user",
+                        "content": final_text
+                    }
+                ]
+
+                extracted = call_model("team addition extraction", extraction_messages)
+                final_names = [
+                    name.strip().strip(" -*")
+                    for name in extracted.message.content.split(",")
+                    if name.strip().strip(" -*")
+                ][:slots_remaining]
+                logger.info(
+                    "Team addition extraction completed addition_count=%d expected_count=%d",
+                    len(final_names),
+                    slots_remaining,
+                )
+
+                existing_names = {member["name"].casefold() for member in full_team_sprites}
+                for name in final_names:
+                    pokemon = get_pokemon(name)
+                    if not pokemon:
+                        logger.warning("Could not resolve suggested team member name=%s", name)
+                        continue
+                    canonical_name = pokemon["name"]
+                    if canonical_name.casefold() in existing_names:
+                        continue
+                    sprite = pokemon.get("showdown_sprite") or pokemon.get("official_artwork")
                     full_team_sprites.append({
-                        "name": p["name"],
-                        "showdown_sprite": p["showdown_sprite"]
+                        "name": canonical_name,
+                        "showdown_sprite": sprite
                     })
+                    existing_names.add(canonical_name.casefold())
 
             result["team_sprites"] = full_team_sprites
-            logger.info("Final team sprites assembled sprite_count=%d", len(full_team_sprites))
+            logger.info(
+                "Final team sprites assembled sprite_count=%d expected_count=6",
+                len(full_team_sprites),
+            )
+            if len(full_team_sprites) != 6 or any(
+                not member.get("showdown_sprite") for member in full_team_sprites
+            ):
+                logger.error(
+                    "Could not assemble a complete team response sprite_count=%d",
+                    len(full_team_sprites),
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail="Could not assemble all six Pokémon for the recommended team.",
+                )
 
         elif context["response_category"] == "battle_simulation":
             result["battle_data"] = context.get("battle_data")

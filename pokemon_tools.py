@@ -211,13 +211,13 @@ def analyze_team_coverage(pokemon_names: list[str]):
     defensive_weaknesses = {t: 0 for t in ALL_TYPES}
     offensive_coverage = set()
     
-    # Store name and showdown sprite for the frontend
+    # Store a sprite URL for each member for the frontend.
     team_members_info = []
 
     for member in team_data:
         team_members_info.append({
             "name": member["name"],
-            "showdown_sprite": member["showdown_sprite"]
+            "showdown_sprite": member.get("showdown_sprite") or member.get("official_artwork")
         })
         
         member_types = member["types"]
@@ -261,10 +261,10 @@ def analyze_team_coverage(pokemon_names: list[str]):
 
     if major_weaknesses:
         tip = (
-            f"CRITICAL INSTRUCTION: The user's team is weak to these attack types: {', '.join(major_weaknesses)}. "
-            f"DO NOT suggest adding Pokémon of these types. "
-            f"Instead, suggest adding Pokémon with these typing to resist them: {', '.join(best_resistances[:5])}. "
-            f"{slot_instruction}"
+            f"The current team is vulnerable to attacks of these types: {', '.join(major_weaknesses)}. "
+            f"Prioritize additions whose typing resists or is immune to those attacks; "
+            f"helpful defensive types include: {', '.join(best_resistances[:5])}. "
+            f"Improve offensive coverage where practical. {slot_instruction}"
         )
     else:
         tip = f"Your team has great defensive synergy! {slot_instruction}"

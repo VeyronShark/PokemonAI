@@ -4,6 +4,7 @@ const sendButton = document.querySelector("#send-button");
 const conversation = document.querySelector("#conversation");
 const welcome = document.querySelector("#welcome");
 const errorMessage = document.querySelector("#error-message");
+const assistantLogoUrl = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcShi1ZGHPZJ0tlua41UfrKeHXvcvGIg1c7msaZK7dNAhw&s=10";
 
 const history = [];
 let isSending = false;
@@ -393,7 +394,8 @@ function renderResponseExtras(container, data) {
 
 function addMessage(role, text, responseData) {
   const message = element("article", `message ${role}`);
-  const avatar = element("div", "avatar", role === "user" ? "You" : "P");
+  const avatar = element("div", "avatar", role === "user" ? "You" : "");
+  if (role === "assistant") addImage(avatar, assistantLogoUrl, "", "avatar-image");
   avatar.setAttribute("aria-hidden", "true");
   const body = element("div", "message-body");
   body.append(element("p", "message-label", role === "user" ? "You" : "Poké AI"));
@@ -424,6 +426,7 @@ async function sendMessage(message) {
   addMessage("user", message);
   const typingMessage = addMessage("assistant", "Thinking...", null);
   typingMessage.querySelector(".bubble").classList.add("typing");
+  typingMessage.querySelector(".avatar").classList.add("is-spinning");
 
   try {
     const response = await fetch("/chat", {
