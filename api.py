@@ -1,4 +1,8 @@
+from pathlib import Path
+
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import time
 
@@ -10,6 +14,15 @@ from web_search import web_search
 from web_page import fetch_web_page
 
 app = FastAPI()
+
+FRONTEND_DIR = Path(__file__).parent / "frontend"
+app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+
+
+@app.get("/")
+def frontend():
+    return FileResponse(FRONTEND_DIR / "index.html")
+
 
 DEVELOPMENT_MODE = False
 

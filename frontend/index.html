@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f7f8fc">
+    <title>Poké AI — Your Pokémon companion</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/script.js" defer></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Poké AI home">
+          <span class="brand-mark" aria-hidden="true">P</span>
+          <span>Poké<span class="brand-accent">AI</span></span>
+        </a>
+        <span class="service-status"><span class="status-dot"></span> Pokémon assistant</span>
+      </header>
+
+      <section class="chat-layout" aria-label="Pokémon assistant chat">
+        <div class="intro" id="welcome">
+          <div class="eyebrow"><span aria-hidden="true">✦</span> YOUR POKÉMON COMPANION</div>
+          <h1>Ready to explore<br>the world of Pokémon?</h1>
+          <p>Ask about Pokémon, build a team, or imagine a battle. Let’s get started.</p>
+          <div class="suggestions" aria-label="Suggested questions">
+            <button class="suggestion" type="button" data-prompt="What are Pikachu's types and base stats?">
+              <span aria-hidden="true">⚡</span> Tell me about Pikachu
+            </button>
+            <button class="suggestion" type="button" data-prompt="Build a balanced team around Bulbasaur.">
+              <span aria-hidden="true">✦</span> Build me a team
+            </button>
+            <button class="suggestion" type="button" data-prompt="Who would win in a battle: Charizard or Blastoise?">
+              <span aria-hidden="true">⚔</span> Simulate a battle
+            </button>
+          </div>
+        </div>
+
+        <div class="conversation" id="conversation" aria-live="polite" aria-label="Conversation"></div>
+
+        <div class="error-message" id="error-message" role="alert" hidden></div>
+
+        <form class="composer" id="chat-form">
+          <label class="sr-only" for="message-input">Ask your Pokémon question</label>
+          <textarea id="message-input" name="message" rows="1" maxlength="2000"
+            placeholder="Ask anything about Pokémon..." required></textarea>
+          <button class="send-button" id="send-button" type="submit" aria-label="Send message">
+            <span aria-hidden="true">↑</span>
+          </button>
+        </form>
+        <p class="disclaimer">Poké AI can make mistakes. Double-check important info with a Pokédex.</p>
+      </section>
+    </main>
+  </body>
+</html>
