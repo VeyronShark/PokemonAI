@@ -71,6 +71,7 @@ The backend registers the following functions for model tool calling:
 | <mark><code>search_knowledge</code></mark> | Retrieve the most relevant passages from the local Pokémon knowledge collection. |
 | <mark><code>web_search</code></mark> | Search the web for information that is current or not covered by local sources. |
 | <mark><code>fetch_web_page</code></mark> | Fetch a webpage and extract a bounded amount of readable text. |
+
 These are the same six tools shown in the frontend's architecture overview.
 
 Tool selection is driven by the system instructions and each function's description. In broad terms:
