@@ -152,20 +152,6 @@ def get_pokemon(name):
         "showdown_sprite": showdown_sprite
     }
 
-def get_pokemon_character_sheet(name):
-    best_match = find_best_pokemon_match(name)
-    
-    if not best_match:
-        return None
-        
-    url = f"https://pokeapi.co/api/v2/pokemon/{best_match}"
-    response = _get_pokeapi(url, "fetch character sheet")
-    
-    if response.status_code == 200:
-        return response.json()
-
-    return None
-
 # Standard Pokémon Type Effectiveness Chart
 TYPE_CHART = {
     "normal": {"rock": 0.5, "ghost": 0, "steel": 0.5},

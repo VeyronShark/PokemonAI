@@ -66,33 +66,7 @@ Triggered when the user asks to build or evaluate a team.
 
 ---
 
-## 4. Character Sheet (generate_character_sheet)
-**How to detect:** `type === "character_sheet"`
-
-Triggered when the user explicitly asks to generate a character sheet.
-*   **Data provided:** A short text confirmation from the AI, PLUS the entire raw PokeAPI JSON object for that Pokémon.
-*   **Suggested Rendering:** Render a rich UI card component using the stats, moves, abilities, and sprites found inside the `character_sheet` object.
-
-**Example Payload:**
-```json
-{
-  "response": "Your character sheet for Mega Mewtwo Y is ready!",
-  "type": "character_sheet",
-  "character_sheet": {
-    "id": 10044,
-    "name": "mewtwo-mega-y",
-    "base_experience": 351,
-    "stats": [...],
-    "types": [...],
-    "sprites": {...}
-    // ... rest of the massive PokeAPI object
-  }
-}
-
-
-```
-
-## 5. Battle Simulation (`type: "battle_simulation"`)
+## 4. Battle Simulation (`type: "battle_simulation"`)
 
 ### Detection
 Check if `response.type === "battle_simulation"`.

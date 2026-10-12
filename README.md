@@ -51,7 +51,7 @@ flowchart LR
 3. The response may be ordinary text or one or more function calls. The backend dispatches each function by name and appends its result to the conversation supplied to the model.
 4. The model may request another round of functions. The backend repeats the tool loop until the model returns a response without more function calls.
 5. A final synthesis step generates the user-facing text. Special instructions keep team recommendations aligned with the analyzed core and constrain battle responses to a short introduction.
-6. The backend returns the text plus optional structured data. The browser renders the message and, where applicable, a Pokémon image, a team, a character sheet, or battle controls.
+6. The backend returns the text plus optional structured data. The browser renders the message and, where applicable, a Pokémon image, a team, or battle controls.
 
 This is agentic in the practical sense that **the model chooses and can sequence functions in response to the request**. It is not an unconstrained autonomous process: Python owns function execution and the deterministic calculations, and the request only completes when the backend has a final response or an error.
 
@@ -71,13 +71,11 @@ The backend registers the following functions for model tool calling:
 | <mark><code>search_knowledge</code></mark> | Retrieve the most relevant passages from the local Pokémon knowledge collection. |
 | <mark><code>web_search</code></mark> | Search the web for information that is current or not covered by local sources. |
 | <mark><code>fetch_web_page</code></mark> | Fetch a webpage and extract a bounded amount of readable text. |
-| <mark><code>generate_character_sheet</code></mark> | Retrieve a full PokéAPI record for the optional character-sheet response path. |
-
-The first six are the tools shown in the frontend's architecture overview. <mark><code>generate_character_sheet</code></mark> is also registered by the backend and has a corresponding browser renderer, but it is not one of the three featured pipelines below.
+These are the same six tools shown in the frontend's architecture overview.
 
 Tool selection is driven by the system instructions and each function's description. In broad terms:
 
-- Pokémon facts and visual character data route to PokéAPI-backed functions.
+- Pokémon facts and artwork route to PokéAPI-backed functions.
 - Team building routes to <mark><code>analyze_team_coverage</code></mark>, with only user-selected Pokémon passed as the initial core.
 - A requested matchup routes to <mark><code>simulate_battle</code></mark>.
 - Local lore can route to <mark><code>search_knowledge</code></mark>.
@@ -99,12 +97,6 @@ This path is for factual questions about individual Pokémon, such as types, abi
 6. **Render the result.** If the tool result is categorized as `pokemon_data`, the API includes the official artwork URL in its response. The frontend renders the model's answer and the artwork.
 
 The backend retries selected transient PokéAPI failures, and Pokémon names/move details use in-process caches where configured. A failed or unresolved lookup does not provide invented structured data.
-
-#### Character-sheet capability
-
-The optional <mark><code>generate_character_sheet</code></mark> function requests the full PokéAPI Pokémon record for the requested name/form. The raw record is held in backend context rather than added wholesale to the model prompt; the model receives only a short confirmation. The response can then carry `type: "character_sheet"` and the raw record, which the frontend renderer uses to build a card with artwork, types, abilities, and base-stat bars.
-
-This capability exists in the backend and frontend, but it is separate from the standard factual lookup and is not included in the six-tool visual directory in the modal.
 
 ### 2. Team builder
 
@@ -191,7 +183,6 @@ The normal response always includes a text `response`. It also includes a `type`
 | `pokemon_data` | `image_url` | Assistant text and official artwork |
 | `team_analysis` | `team_sprites` | Assistant text and a grid of team sprites |
 | `battle_simulation` | `battle_data` | Assistant text and interactive battle card |
-| `character_sheet` | `character_sheet` | Assistant text and Pokémon stats card |
 
 Representative task-specific shapes:
 
@@ -290,7 +281,7 @@ The chat history is held in the browser's JavaScript memory and sent with subseq
 | `rag_chat.py` | Standalone interactive local knowledge-base query script |
 | `frontend/index.html` | Chat and architecture-modal markup |
 | `frontend/styles.css` | Frontend theme, responsive styles, and animations |
-| `frontend/script.js` | Chat requests and rendering for text, Pokémon data, teams, character sheets, and battles |
+| `frontend/script.js` | Chat requests and rendering for text, Pokémon data, teams, and battles |
 | `requirements.txt` | Python dependency pins |
 | `test_*.py` | Standalone connectivity and tool smoke scripts |
 

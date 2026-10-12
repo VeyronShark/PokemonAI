@@ -227,55 +227,6 @@ function renderTeam(container, team) {
   if (card.childElementCount) container.append(card);
 }
 
-function renderCharacterSheet(container, sheet) {
-  if (!sheet || typeof sheet !== "object") return;
-  const card = element("div", "result-card");
-  const heading = element("div", "sheet-heading");
-  const sprite = sheet.sprites?.other?.["official-artwork"]?.front_default
-    || sheet.sprites?.front_default;
-  addImage(heading, sprite, `${sheet.name || "Pokémon"} artwork`);
-  const title = element("div");
-  title.append(element("h2", "", String(sheet.name || "Pokémon")));
-  const types = Array.isArray(sheet.types)
-    ? sheet.types.map((item) => item?.type?.name).filter(Boolean)
-    : [];
-  const typeList = element("div", "type-list");
-  types.forEach((type) => typeList.append(element("span", "pill", type)));
-  title.append(typeList);
-  heading.append(title);
-  card.append(heading);
-
-  const abilities = Array.isArray(sheet.abilities)
-    ? sheet.abilities.map((item) => item?.ability?.name).filter(Boolean)
-    : [];
-  if (abilities.length) {
-    card.append(element("p", "sheet-subtitle", "Abilities"));
-    const abilityList = element("div", "ability-list");
-    abilities.forEach((name) => abilityList.append(element("span", "pill", name)));
-    card.append(abilityList);
-  }
-
-  if (Array.isArray(sheet.stats) && sheet.stats.length) {
-    card.append(element("p", "sheet-subtitle", "Base stats"));
-    const stats = element("div", "stats-list");
-    for (const stat of sheet.stats) {
-      const value = Number(stat?.base_stat);
-      if (!Number.isFinite(value)) continue;
-      const row = element("div", "stat-row");
-      row.append(element("span", "", String(stat?.stat?.name || "Stat")));
-      row.append(element("span", "", String(value)));
-      const track = element("div", "stat-track");
-      const fill = element("div", "stat-fill");
-      fill.style.width = `${Math.min(value / 255 * 100, 100)}%`;
-      track.append(fill);
-      row.append(track);
-      stats.append(row);
-    }
-    card.append(stats);
-  }
-  container.append(card);
-}
-
 function renderBattle(container, data) {
   if (!data || typeof data !== "object") return;
   const card = element("div", "result-card");
@@ -393,9 +344,6 @@ function renderResponseExtras(container, data) {
       break;
     case "team_analysis":
       renderTeam(container, data.team_sprites);
-      break;
-    case "character_sheet":
-      renderCharacterSheet(container, data.character_sheet);
       break;
     case "battle_simulation":
       renderBattle(container, data.battle_data);

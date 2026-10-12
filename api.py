@@ -13,7 +13,7 @@ import time
 
 from ollama import chat
 
-from pokemon_tools import get_pokemon, get_pokemon_character_sheet, analyze_team_coverage, simulate_battle
+from pokemon_tools import get_pokemon, analyze_team_coverage, simulate_battle
 from rag_tools import search_knowledge
 from web_search import web_search
 from web_page import fetch_web_page
@@ -149,14 +149,7 @@ You have access to:
    - After searching, choose the most relevant source.
    - Use webpage content as source material.
 
-4. Character sheet generator
-   - Use generate_character_sheet when the user asks to generate a character
-     sheet for a Pokémon.
-   - This tool returns the full Pokémon data needed to render a visual card.
-   - After calling it, tell the user their character sheet is ready.
-   - Pass the name and form of the Pokémon exactly as requested (e.g., "Mega Mewtwo Y" or "Alolan Raichu").
-
-5. Team builder and coverage analyzer
+4. Team builder and coverage analyzer
    - Use analyze_team_coverage when the user wants to build a team, 
      analyze an existing team, or fill remaining slots on a roster.
    - For team building, pass only Pokémon the user explicitly selected as
@@ -165,7 +158,7 @@ You have access to:
      unless the user explicitly asks for swaps.
    - Add exactly enough Pokémon to bring a partial roster to six.
 
-6. Battle simulator
+5. Battle simulator
    - Use simulate_battle when the user asks to simulate a fight or battle 
      between two Pokémon (e.g. "Charizard vs Blastoise").
    - Pass the names of both Pokémon as arguments.
@@ -297,27 +290,6 @@ the first result.
         }
     },
 
-    {
-        "type": "function",
-        "function": {
-            "name": "generate_character_sheet",
-            "description": (
-                "Generate a character sheet for a specific Pokémon or form. "
-                "Use this when the user asks to generate a character sheet. "
-                "Pass the name of the Pokémon exactly as the user requested."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "The name and form of the Pokémon (e.g., 'Charizard', 'Mega Charizard X', 'Alolan Raichu')."
-                    }
-                },
-                "required": ["name"]
-            }
-        }
-    },
     {
         "type": "function",
         "function": {
@@ -506,30 +478,6 @@ Do not answer the user's question.
                 "error": str(error)
             }
 
-
-    elif function_name == "generate_character_sheet":
-
-        name = arguments["name"]
-
-        logger.info("Generating Pokémon character sheet")
-
-        result = get_pokemon_character_sheet(name)
-
-        if result is None:
-            return {
-                "error": f"Pokémon '{name}' was not found."
-            }
-
-        # Store the full raw JSON in the side-channel context so it never
-        # gets fed to the LLM (which would hallucinate over 300+ moves).
-        context["character_sheet"] = result
-
-        # Return only a short confirmation to the LLM.
-        return {
-            "status": "character_sheet_ready",
-            "name": result.get("name"),
-            "id": result.get("id")
-        }
 
     elif function_name == "analyze_team_coverage":
         pokemon_names = arguments["pokemon_names"]
@@ -866,10 +814,6 @@ def chat_endpoint(request: ChatRequest):
         elif context["response_category"] == "battle_simulation":
             result["battle_data"] = context.get("battle_data")
 
-    elif "character_sheet" in context:
-        result["type"] = "character_sheet"
-        result["character_sheet"] = context["character_sheet"]
-        
     else:
         result["type"] = "standard_chat"
 
