@@ -1,0 +1,335 @@
+import requests
+import difflib
+
+# Cache to store all valid PokeAPI slugs
+VALID_POKEMON_SLUGS = []
+
+def get_valid_pokemon_slugs():
+    global VALID_POKEMON_SLUGS
+    if not VALID_POKEMON_SLUGS:
+        url = "https://pokeapi.co/api/v2/pokemon?limit=10000"
+        response = requests.get(url)
+        if response.status_code == 200:
+            VALID_POKEMON_SLUGS = [p["name"] for p in response.json()["results"]]
+    return VALID_POKEMON_SLUGS
+
+def find_best_pokemon_match(name):
+    valid_slugs = get_valid_pokemon_slugs()
+    # Strip out dots (e.g. Mr. Mime) and normalize
+    normalized_name = name.lower().replace(" ", "-").replace("'", "").replace(".", "")
+    
+    parts = normalized_name.split("-")
+    permutations = [
+        normalized_name,
+        "-".join(reversed(parts))
+    ]
+    
+    # Handle forms like "mega aggron" -> ["mega", "aggron"] -> "aggron-mega"
+    if len(parts) >= 2:
+        permutations.append(f"{parts[1]}-{parts[0]}")
+        
+    # Handle forms like "mega mewtwo x" -> ["mega", "mewtwo", "x"] -> "mewtwo-mega-x"
+    if len(parts) >= 3:
+        permutations.append(f"{parts[1]}-{parts[0]}-{parts[2]}") 
+        permutations.append(f"{parts[1]}-{parts[2]}-{parts[0]}") # For tauros-paldea-combat
+        
+    # 1. Try exact permutations first
+    for perm in permutations:
+        if perm in valid_slugs:
+            return perm
+            
+    # 2. Fallback to fuzzy match
+    for perm in permutations:
+        matches = difflib.get_close_matches(perm, valid_slugs, n=1, cutoff=0.6)
+        if matches:
+            return matches[0]
+            
+    return None
+
+def get_pokemon(name):
+    best_match = find_best_pokemon_match(name)
+    
+    if not best_match:
+        return None
+
+    url = f"https://pokeapi.co/api/v2/pokemon/{best_match}"
+    response = requests.get(url)
+
+    if response.status_code != 200:
+        return None
+
+    pokemon = response.json()
+    
+    # Safely extract deeply nested sprite URLs
+    sprites = pokemon.get("sprites", {})
+    other_sprites = sprites.get("other", {})
+    
+    official_artwork = other_sprites.get("official-artwork", {}).get("front_default")
+    showdown_sprite = other_sprites.get("showdown", {}).get("front_default")
+
+    return {
+        "name": pokemon["name"],
+        "height_decimetres": pokemon["height"],
+        "weight_hectograms": pokemon["weight"],
+        "types": [
+            type_data["type"]["name"]
+            for type_data in pokemon["types"]
+        ],
+        "abilities": [
+            ability_data["ability"]["name"]
+            for ability_data in pokemon["abilities"]
+        ],
+        "base_stats": {
+            stat["stat"]["name"]: stat["base_stat"]
+            for stat in pokemon["stats"]
+        },
+        "official_artwork": official_artwork,
+        "showdown_sprite": showdown_sprite
+    }
+
+def get_pokemon_character_sheet(name):
+    best_match = find_best_pokemon_match(name)
+    
+    if not best_match:
+        return None
+        
+    url = f"https://pokeapi.co/api/v2/pokemon/{best_match}"
+    response = requests.get(url)
+    
+    if response.status_code == 200:
+        return response.json()
+
+    return None
+
+# Standard Pokémon Type Effectiveness Chart
+TYPE_CHART = {
+    "normal": {"rock": 0.5, "ghost": 0, "steel": 0.5},
+    "fire": {"fire": 0.5, "water": 0.5, "grass": 2.0, "ice": 2.0, "bug": 2.0, "rock": 0.5, "dragon": 0.5, "steel": 2.0},
+    "water": {"fire": 2.0, "water": 0.5, "grass": 0.5, "ground": 2.0, "rock": 2.0, "dragon": 0.5},
+    "electric": {"water": 2.0, "electric": 0.5, "grass": 0.5, "ground": 0, "flying": 2.0, "dragon": 0.5},
+    "grass": {"fire": 0.5, "water": 2.0, "grass": 0.5, "poison": 0.5, "ground": 2.0, "flying": 0.5, "bug": 0.5, "rock": 2.0, "dragon": 0.5, "steel": 0.5},
+    "ice": {"fire": 0.5, "water": 0.5, "grass": 2.0, "ice": 0.5, "ground": 2.0, "flying": 2.0, "dragon": 2.0, "steel": 0.5},
+    "fighting": {"normal": 2.0, "ice": 2.0, "poison": 0.5, "flying": 0.5, "psychic": 0.5, "bug": 0.5, "rock": 2.0, "ghost": 0, "dark": 2.0, "steel": 2.0, "fairy": 0.5},
+    "poison": {"grass": 2.0, "poison": 0.5, "ground": 0.5, "rock": 0.5, "ghost": 0.5, "steel": 0, "fairy": 2.0},
+    "ground": {"fire": 2.0, "electric": 2.0, "grass": 0.5, "poison": 2.0, "flying": 0, "bug": 0.5, "rock": 2.0, "steel": 2.0},
+    "flying": {"electric": 0.5, "grass": 2.0, "fighting": 2.0, "bug": 2.0, "rock": 0.5, "steel": 0.5},
+    "psychic": {"fighting": 2.0, "poison": 2.0, "psychic": 0.5, "dark": 0, "steel": 0.5},
+    "bug": {"fire": 0.5, "grass": 2.0, "fighting": 0.5, "poison": 0.5, "flying": 0.5, "psychic": 2.0, "ghost": 0.5, "dark": 2.0, "steel": 0.5, "fairy": 0.5},
+    "rock": {"fire": 2.0, "ice": 2.0, "fighting": 0.5, "ground": 0.5, "flying": 2.0, "bug": 2.0, "steel": 0.5},
+    "ghost": {"normal": 0, "psychic": 2.0, "ghost": 2.0, "dark": 0.5},
+    "dragon": {"dragon": 2.0, "steel": 0.5, "fairy": 0},
+    "dark": {"fighting": 0.5, "psychic": 2.0, "ghost": 2.0, "dark": 0.5, "fairy": 0.5},
+    "steel": {"fire": 0.5, "water": 0.5, "electric": 0.5, "ice": 2.0, "rock": 2.0, "steel": 0.5, "fairy": 2.0},
+    "fairy": {"fire": 0.5, "fighting": 2.0, "poison": 0.5, "dragon": 2.0, "dark": 2.0, "steel": 0.5}
+}
+
+ALL_TYPES = list(TYPE_CHART.keys())
+
+def analyze_team_coverage(pokemon_names: list[str]):
+    """Analyzes a team of up to 6 Pokémon for shared defensive weaknesses 
+    and missing offensive type coverage."""
+    team_data = []
+    
+    for name in pokemon_names:
+        p_data = get_pokemon(name)
+        if p_data:
+            team_data.append(p_data)
+
+    if not team_data:
+        return {"error": "None of the provided Pokémon could be found."}
+
+    defensive_weaknesses = {t: 0 for t in ALL_TYPES}
+    offensive_coverage = set()
+    
+    # Store name and showdown sprite for the frontend
+    team_members_info = []
+
+    for member in team_data:
+        team_members_info.append({
+            "name": member["name"],
+            "showdown_sprite": member["showdown_sprite"]
+        })
+        
+        member_types = member["types"]
+        
+        for t in member_types:
+            offensive_coverage.add(t)
+
+        for atk_type in ALL_TYPES:
+            multiplier = 1.0
+            for def_type in member_types:
+                mult_map = TYPE_CHART.get(atk_type, {})
+                multiplier *= mult_map.get(def_type, 1.0)
+            
+            if multiplier > 1.0:
+                defensive_weaknesses[atk_type] += 1
+
+    major_weaknesses = [
+        type_name for type_name, count in defensive_weaknesses.items() if count >= 1
+    ]
+    
+    best_resistances = set()
+    for weakness in major_weaknesses:
+        for def_type in ALL_TYPES:
+            if TYPE_CHART.get(weakness, {}).get(def_type, 1.0) < 1.0:
+                best_resistances.add(def_type)
+
+    uncovered_offensive_types = [
+        t for t in ALL_TYPES if t not in offensive_coverage
+    ]
+
+    major_weaknesses.sort()
+    best_resistances = sorted(list(best_resistances))
+    uncovered_offensive_types.sort()
+
+    slots_remaining = 6 - len(team_data)
+    
+    if slots_remaining > 0:
+        slot_instruction = f"To make a full team of 6, you MUST suggest exactly {slots_remaining} more specific Pokémon."
+    else:
+        slot_instruction = "The team is already full (6 Pokémon)."
+
+    if major_weaknesses:
+        tip = (
+            f"CRITICAL INSTRUCTION: The user's team is weak to these attack types: {', '.join(major_weaknesses)}. "
+            f"DO NOT suggest adding Pokémon of these types. "
+            f"Instead, suggest adding Pokémon with these typing to resist them: {', '.join(best_resistances[:5])}. "
+            f"{slot_instruction}"
+        )
+    else:
+        tip = f"Your team has great defensive synergy! {slot_instruction}"
+
+    return {
+        "team_members": team_members_info,
+        "team_size": len(team_data),
+        "defensive_weaknesses": major_weaknesses,
+        "missing_offensive_types": uncovered_offensive_types,
+        "recommendation_tip": tip
+    }
+
+import math
+
+def get_move_details(move_name):
+    """Fetch base power, type, and damage class for a specific move from PokeAPI."""
+    url = f"https://pokeapi.co/api/v2/move/{move_name.lower().replace(' ', '-')}"
+    res = requests.get(url)
+    if res.status_code != 200:
+        return None
+    data = res.json()
+    
+    # Ignore status moves (moves with no base power)
+    if not data.get("power"):
+        return None
+        
+    return {
+        "name": data["name"],
+        "power": data["power"],
+        "type": data["type"]["name"],
+        "damage_class": data["damage_class"]["name"]  # 'physical' or 'special'
+    }
+
+def calculate_move_damage(attacker, defender, move):
+    """Calculates exact damage using the official Level 50 Pokémon damage formula."""
+    level = 50
+    power = move["power"]
+    
+    # Match physical vs special attacking/defensive stats
+    if move["damage_class"] == "physical":
+        a = attacker["base_stats"].get("attack", 100)
+        d = defender["base_stats"].get("defense", 100)
+    else:
+        a = attacker["base_stats"].get("special-attack", 100)
+        d = defender["base_stats"].get("special-defense", 100)
+
+    # 1. Base Damage Calculation
+    base_damage = math.floor(math.floor((2 * level / 5 + 2) * power * a / d) / 50) + 2
+
+    # 2. STAB (Same Type Attack Bonus)
+    stab = 1.5 if move["type"] in attacker["types"] else 1.0
+
+    # 3. Type Effectiveness Multiplier
+    type_mult = 1.0
+    for def_type in defender["types"]:
+        type_mult *= TYPE_CHART.get(move["type"], {}).get(def_type, 1.0)
+
+    # Final Damage (using neutral variance multiplier of 0.925)
+    final_damage = math.floor(base_damage * stab * type_mult * 0.925)
+    return max(1, final_damage)
+
+def select_best_moveset(attacker_data, defender_data):
+    """Fetch learned moves, filter damaging ones, and greedily pick the top 4."""
+    # Pull raw Pokémon details to get the learnset
+    best_match = find_best_pokemon_match(attacker_data["name"])
+    res = requests.get(f"https://pokeapi.co/api/v2/pokemon/{best_match}")
+    if res.status_code != 200:
+        return []
+    
+    raw_pokemon = res.json()
+    learned_moves = [m["move"]["name"] for m in raw_pokemon.get("moves", [])]
+
+    damaging_moves = []
+    
+    # Cap move lookups to the first 25 learned moves to keep API execution snappy
+    for move_name in learned_moves[:25]:
+        details = get_move_details(move_name)
+        if details:
+            # Pre-calculate damage against opponent
+            details["damage_to_opponent"] = calculate_move_damage(attacker_data, defender_data, details)
+            damaging_moves.append(details)
+
+    # Sort moves by damage output descending
+    damaging_moves.sort(key=lambda x: x["damage_to_opponent"], reverse=True)
+
+    # Pick top 4 moves with distinct types when possible
+    selected = []
+    used_types = set()
+    for move in damaging_moves:
+        if len(selected) == 4:
+            break
+        if move["type"] not in used_types or len(damaging_moves) < 4:
+            selected.append(move)
+            used_types.add(move["type"])
+
+    # Fallback if fewer than 4 distinct types were found
+    if len(selected) < 4:
+        for move in damaging_moves:
+            if len(selected) == 4:
+                break
+            if move not in selected:
+                selected.append(move)
+
+    return selected
+
+def simulate_battle(pokemon1_name: str, pokemon2_name: str):
+    """Builds a full battle simulation context between two Pokémon."""
+    p1 = get_pokemon(pokemon1_name)
+    p2 = get_pokemon(pokemon2_name)
+
+    if not p1 or not p2:
+        return {"error": "One or both Pokémon could not be found."}
+
+    # Fetch raw sprites for back_default and front_default
+    raw_p1 = requests.get(f"https://pokeapi.co/api/v2/pokemon/{find_best_pokemon_match(pokemon1_name)}").json()
+    raw_p2 = requests.get(f"https://pokeapi.co/api/v2/pokemon/{find_best_pokemon_match(pokemon2_name)}").json()
+
+    p1_back_sprite = raw_p1["sprites"]["other"].get("showdown", {}).get("back_default") or raw_p1["sprites"]["back_default"]
+    p2_front_sprite = raw_p2["sprites"]["other"].get("showdown", {}).get("front_default") or raw_p2["sprites"]["front_default"]
+
+    # Calculate optimal movesets and damage
+    p1_moves = select_best_moveset(p1, p2)
+    p2_moves = select_best_moveset(p2, p1)
+
+    return {
+        "player_one": {
+            "name": p1["name"],
+            "max_hp": p1["base_stats"].get("hp", 100) * 2 + 110,  # Level 50 HP formula
+            "back_sprite": p1_back_sprite,
+            "moves": p1_moves
+        },
+        "player_two": {
+            "name": p2["name"],
+            "max_hp": p2["base_stats"].get("hp", 100) * 2 + 110,
+            "front_sprite": p2_front_sprite,
+            "moves": p2_moves
+        }
+    }
