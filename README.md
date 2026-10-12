@@ -300,7 +300,7 @@ The chat history is held in the browser's JavaScript memory and sent with subseq
 From the repository root in PowerShell:
 
 ```powershell
-py -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
