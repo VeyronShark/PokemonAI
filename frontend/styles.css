@@ -53,6 +53,22 @@ h1 { margin: 17px 0 13px; font-size: clamp(34px, 6vw, 52px); line-height: 1.08; 
 .message.user .avatar { color: #6257ba; background: #eae8fa; }
 .message-body { max-width: min(84%, 620px); }
 .bubble { padding: 12px 15px; border: 1px solid var(--line); border-radius: 4px 16px 16px; background: white; color: #34394d; font-size: 14px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.markdown-body { white-space: normal; }
+.markdown-body > :first-child { margin-top: 0; }
+.markdown-body > :last-child { margin-bottom: 0; }
+.markdown-body p { margin: 0 0 10px; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6 { margin: 14px 0 7px; letter-spacing: normal; line-height: 1.3; }
+.markdown-body h1 { font-size: 1.45em; }
+.markdown-body h2 { font-size: 1.3em; }
+.markdown-body h3 { font-size: 1.15em; }
+.markdown-body ul, .markdown-body ol { margin: 6px 0 10px; padding-left: 22px; }
+.markdown-body li + li { margin-top: 3px; }
+.markdown-body blockquote { margin: 8px 0; padding-left: 11px; border-left: 3px solid #d9d4f5; color: #666b7d; }
+.markdown-body pre { overflow-x: auto; margin: 8px 0; padding: 10px 12px; border-radius: 9px; background: #f3f3f8; }
+.markdown-body code { padding: 1px 4px; border-radius: 4px; background: #f1f0f8; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .9em; }
+.markdown-body pre code { padding: 0; background: transparent; }
+.markdown-body a { color: var(--purple-dark); text-decoration: underline; text-underline-offset: 2px; }
+.markdown-body hr { border: 0; border-top: 1px solid var(--line); }
 .message.user .bubble { border-color: #dedaf7; border-radius: 16px 4px 16px 16px; background: #efedfc; }
 .message-label { margin: 0 0 5px 2px; color: #898da0; font-size: 11px; }
 .message.user .message-label { text-align: right; }
@@ -75,14 +91,22 @@ h1 { margin: 17px 0 13px; font-size: clamp(34px, 6vw, 52px); line-height: 1.08; 
 .stat-row { display: grid; grid-template-columns: minmax(90px, 1fr) 36px 2fr; gap: 8px; align-items: center; color: #656a7b; font-size: 11px; text-transform: capitalize; }
 .stat-track, .hp-track { height: 7px; border-radius: 99px; background: #eeeef4; overflow: hidden; }
 .stat-fill, .hp-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #8274e7, #58c696); }
+.hp-fill { transition: width .35s ease, background .2s ease; }
+.hp-fill.hp-low { background: linear-gradient(90deg, #ee8e72, #dc5278); }
 .battle-row { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; }
 .battle-side { min-width: 0; text-align: center; }
-.battle-side img { width: min(100%, 130px); height: 106px; object-fit: contain; }
+.battle-sprite-frame { position: relative; display: block; overflow: hidden; margin: 0 auto; }
+.battle-side img.battle-sprite { position: absolute; display: block; max-width: none; margin: 0; image-rendering: pixelated; }
 .battle-side h3 { margin: 4px 0 9px; font-size: 13px; text-transform: capitalize; }
 .battle-vs { color: #9a9caf; font-size: 12px; font-weight: 800; }
 .hp-label { display: flex; justify-content: space-between; margin-bottom: 4px; color: #777d91; font-size: 10px; }
 .move-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; margin-top: 9px; }
 .move { padding: 4px 7px; border-radius: 7px; background: #f1f0f8; color: #5d6175; font-size: 10px; text-transform: capitalize; }
+.battle-controls { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 18px; }
+.battle-status { min-height: 18px; margin: 0; color: #656a7b; text-align: center; font-size: 13px; font-weight: 650; }
+.battle-start { padding: 10px 18px; border: 0; border-radius: 10px; background: var(--purple); color: white; font-size: 13px; font-weight: 700; cursor: pointer; }
+.battle-start:hover:not(:disabled) { background: var(--purple-dark); }
+.battle-start:disabled { opacity: .65; cursor: not-allowed; }
 .error-message { margin-bottom: 10px; padding: 11px 13px; border: 1px solid #f2c7c7; border-radius: 10px; background: #fff4f4; color: #a33e3e; font-size: 13px; }
 
 .composer { position: sticky; bottom: 0; display: flex; align-items: flex-end; gap: 10px; margin-top: auto; padding: 12px; border: 1px solid #e4e5ee; border-radius: 17px; background: white; box-shadow: 0 9px 32px #24243d0c; }

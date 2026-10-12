@@ -1,5 +1,67 @@
-import requests
 import difflib
+from functools import lru_cache
+import logging
+from time import perf_counter, sleep
+
+import requests
+
+logger = logging.getLogger("pokemonai.pokemon")
+
+
+def _get_pokeapi(url, operation):
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        started_at = perf_counter()
+        logger.info(
+            "PokeAPI request started operation=%s attempt=%d/%d",
+            operation,
+            attempt,
+            max_attempts,
+        )
+        try:
+            response = requests.get(url, timeout=(5, 20))
+        except requests.exceptions.RequestException:
+            if attempt == max_attempts:
+                logger.exception(
+                    "PokeAPI request failed operation=%s attempts=%d duration_ms=%.1f",
+                    operation,
+                    attempt,
+                    (perf_counter() - started_at) * 1000,
+                )
+                raise
+            logger.warning(
+                "PokeAPI connection error operation=%s attempt=%d; retrying",
+                operation,
+                attempt,
+                exc_info=True,
+            )
+        else:
+            if response.status_code not in {429, 500, 502, 503, 504}:
+                logger.info(
+                    "PokeAPI request completed operation=%s status=%d duration_ms=%.1f",
+                    operation,
+                    response.status_code,
+                    (perf_counter() - started_at) * 1000,
+                )
+                return response
+
+            if attempt == max_attempts:
+                logger.error(
+                    "PokeAPI request exhausted retries operation=%s status=%d attempts=%d",
+                    operation,
+                    response.status_code,
+                    attempt,
+                )
+                return response
+            logger.warning(
+                "PokeAPI returned retryable status operation=%s status=%d attempt=%d; retrying",
+                operation,
+                response.status_code,
+                attempt,
+            )
+
+        sleep(0.5 * (2 ** (attempt - 1)))
+
 
 # Cache to store all valid PokeAPI slugs
 VALID_POKEMON_SLUGS = []
@@ -8,9 +70,12 @@ def get_valid_pokemon_slugs():
     global VALID_POKEMON_SLUGS
     if not VALID_POKEMON_SLUGS:
         url = "https://pokeapi.co/api/v2/pokemon?limit=10000"
-        response = requests.get(url)
+        response = _get_pokeapi(url, "load Pokémon index")
         if response.status_code == 200:
             VALID_POKEMON_SLUGS = [p["name"] for p in response.json()["results"]]
+            logger.info("Pokémon index loaded entry_count=%d", len(VALID_POKEMON_SLUGS))
+        else:
+            logger.warning("Pokémon index request returned status=%d", response.status_code)
     return VALID_POKEMON_SLUGS
 
 def find_best_pokemon_match(name):
@@ -53,7 +118,7 @@ def get_pokemon(name):
         return None
 
     url = f"https://pokeapi.co/api/v2/pokemon/{best_match}"
-    response = requests.get(url)
+    response = _get_pokeapi(url, "fetch Pokémon data")
 
     if response.status_code != 200:
         return None
@@ -94,7 +159,7 @@ def get_pokemon_character_sheet(name):
         return None
         
     url = f"https://pokeapi.co/api/v2/pokemon/{best_match}"
-    response = requests.get(url)
+    response = _get_pokeapi(url, "fetch character sheet")
     
     if response.status_code == 200:
         return response.json()
@@ -134,6 +199,11 @@ def analyze_team_coverage(pokemon_names: list[str]):
         p_data = get_pokemon(name)
         if p_data:
             team_data.append(p_data)
+    logger.info(
+        "Team members resolved requested_count=%d found_count=%d",
+        len(pokemon_names),
+        len(team_data),
+    )
 
     if not team_data:
         return {"error": "None of the provided Pokémon could be found."}
@@ -209,10 +279,11 @@ def analyze_team_coverage(pokemon_names: list[str]):
 
 import math
 
+@lru_cache(maxsize=512)
 def get_move_details(move_name):
     """Fetch base power, type, and damage class for a specific move from PokeAPI."""
     url = f"https://pokeapi.co/api/v2/move/{move_name.lower().replace(' ', '-')}"
-    res = requests.get(url)
+    res = _get_pokeapi(url, "fetch move details")
     if res.status_code != 200:
         return None
     data = res.json()
@@ -260,22 +331,40 @@ def select_best_moveset(attacker_data, defender_data):
     """Fetch learned moves, filter damaging ones, and greedily pick the top 4."""
     # Pull raw Pokémon details to get the learnset
     best_match = find_best_pokemon_match(attacker_data["name"])
-    res = requests.get(f"https://pokeapi.co/api/v2/pokemon/{best_match}")
+    res = _get_pokeapi(
+        f"https://pokeapi.co/api/v2/pokemon/{best_match}",
+        "fetch Pokémon learnset",
+    )
     if res.status_code != 200:
         return []
     
     raw_pokemon = res.json()
     learned_moves = [m["move"]["name"] for m in raw_pokemon.get("moves", [])]
+    logger.info("Pokémon learnset loaded learned_move_count=%d", len(learned_moves))
 
     damaging_moves = []
     
     # Cap move lookups to the first 25 learned moves to keep API execution snappy
     for move_name in learned_moves[:25]:
-        details = get_move_details(move_name)
+        try:
+            details = get_move_details(move_name)
+        except requests.exceptions.RequestException:
+            logger.warning(
+                "Skipping move after PokeAPI request failure move=%s",
+                move_name,
+                exc_info=True,
+            )
+            continue
         if details:
+            details = details.copy()
             # Pre-calculate damage against opponent
             details["damage_to_opponent"] = calculate_move_damage(attacker_data, defender_data, details)
             damaging_moves.append(details)
+    logger.info(
+        "Damaging move candidates evaluated candidate_count=%d damaging_count=%d",
+        min(len(learned_moves), 25),
+        len(damaging_moves),
+    )
 
     # Sort moves by damage output descending
     damaging_moves.sort(key=lambda x: x["damage_to_opponent"], reverse=True)
@@ -302,6 +391,7 @@ def select_best_moveset(attacker_data, defender_data):
 
 def simulate_battle(pokemon1_name: str, pokemon2_name: str):
     """Builds a full battle simulation context between two Pokémon."""
+    logger.info("Battle setup started")
     p1 = get_pokemon(pokemon1_name)
     p2 = get_pokemon(pokemon2_name)
 
@@ -309,8 +399,14 @@ def simulate_battle(pokemon1_name: str, pokemon2_name: str):
         return {"error": "One or both Pokémon could not be found."}
 
     # Fetch raw sprites for back_default and front_default
-    raw_p1 = requests.get(f"https://pokeapi.co/api/v2/pokemon/{find_best_pokemon_match(pokemon1_name)}").json()
-    raw_p2 = requests.get(f"https://pokeapi.co/api/v2/pokemon/{find_best_pokemon_match(pokemon2_name)}").json()
+    raw_p1 = _get_pokeapi(
+        f"https://pokeapi.co/api/v2/pokemon/{find_best_pokemon_match(pokemon1_name)}",
+        "fetch first battle sprite",
+    ).json()
+    raw_p2 = _get_pokeapi(
+        f"https://pokeapi.co/api/v2/pokemon/{find_best_pokemon_match(pokemon2_name)}",
+        "fetch second battle sprite",
+    ).json()
 
     p1_back_sprite = raw_p1["sprites"]["other"].get("showdown", {}).get("back_default") or raw_p1["sprites"]["back_default"]
     p2_front_sprite = raw_p2["sprites"]["other"].get("showdown", {}).get("front_default") or raw_p2["sprites"]["front_default"]
@@ -318,6 +414,11 @@ def simulate_battle(pokemon1_name: str, pokemon2_name: str):
     # Calculate optimal movesets and damage
     p1_moves = select_best_moveset(p1, p2)
     p2_moves = select_best_moveset(p2, p1)
+    logger.info(
+        "Battle setup completed first_move_count=%d second_move_count=%d",
+        len(p1_moves),
+        len(p2_moves),
+    )
 
     return {
         "player_one": {

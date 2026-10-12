@@ -1,7 +1,12 @@
+from functools import lru_cache
+import logging
 from pathlib import Path
+from time import perf_counter
+from urllib.parse import urlparse
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+import requests
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import time
@@ -15,13 +20,94 @@ from web_page import fetch_web_page
 
 app = FastAPI()
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("pokemonai")
+
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 
+@app.middleware("http")
+async def log_http_requests(request: Request, call_next):
+    started_at = perf_counter()
+    logger.info("HTTP request started method=%s path=%s", request.method, request.url.path)
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception(
+            "HTTP request failed method=%s path=%s duration_ms=%.1f",
+            request.method,
+            request.url.path,
+            (perf_counter() - started_at) * 1000,
+        )
+        raise
+
+    logger.info(
+        "HTTP request completed method=%s path=%s status=%s duration_ms=%.1f",
+        request.method,
+        request.url.path,
+        response.status_code,
+        (perf_counter() - started_at) * 1000,
+    )
+    return response
+
+
 @app.get("/")
 def frontend():
+    logger.info("Serving frontend index")
     return FileResponse(FRONTEND_DIR / "index.html")
+
+
+@lru_cache(maxsize=128)
+def fetch_sprite_image(url):
+    response = requests.get(url, timeout=(5, 20))
+    response.raise_for_status()
+    content_type = response.headers.get("content-type", "").split(";", 1)[0]
+    if not content_type.startswith("image/"):
+        raise ValueError("Upstream response is not an image")
+    return response.content, content_type
+
+
+@app.get("/sprite")
+def sprite_image(url: str):
+    parsed_url = urlparse(url)
+    allowed_path = "/PokeAPI/sprites/master/sprites/pokemon/"
+    if (
+        parsed_url.scheme != "https"
+        or parsed_url.hostname != "raw.githubusercontent.com"
+        or not parsed_url.path.startswith(allowed_path)
+        or ".." in parsed_url.path.split("/")
+        or parsed_url.query
+    ):
+        raise HTTPException(status_code=400, detail="Unsupported sprite URL")
+
+    try:
+        content, content_type = fetch_sprite_image(url)
+    except requests.exceptions.RequestException as error:
+        logger.warning(
+            "Sprite proxy request failed host=%s error_type=%s",
+            parsed_url.hostname,
+            type(error).__name__,
+        )
+        raise HTTPException(status_code=502, detail="Could not retrieve Pokémon sprite") from error
+    except ValueError as error:
+        logger.warning("Sprite proxy received invalid content host=%s", parsed_url.hostname)
+        raise HTTPException(status_code=502, detail="Sprite source returned invalid image data") from error
+
+    logger.info(
+        "Sprite served host=%s content_type=%s bytes=%d",
+        parsed_url.hostname,
+        content_type,
+        len(content),
+    )
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 DEVELOPMENT_MODE = False
@@ -79,6 +165,9 @@ You have access to:
    - Use simulate_battle when the user asks to simulate a fight or battle 
      between two Pokémon (e.g. "Charizard vs Blastoise").
    - Pass the names of both Pokémon as arguments.
+   - After a battle simulation is prepared, do not narrate or explain it.
+     The only response text should be exactly:
+     "Here is a battle simulation between <pokemon> and <pokemon>!"
    
 Answer rules:
 
@@ -282,10 +371,41 @@ the first result.
 # --------------------------------------------------
 
 def execute_tool(function_name, arguments, messages, context):
+    started_at = perf_counter()
+    logger.info(
+        "Tool started name=%s argument_fields=%s",
+        function_name,
+        sorted(arguments.keys()),
+    )
+    try:
+        result = _execute_tool(function_name, arguments, messages, context)
+    except Exception:
+        logger.exception(
+            "Tool failed name=%s duration_ms=%.1f",
+            function_name,
+            (perf_counter() - started_at) * 1000,
+        )
+        raise
+
+    result_keys = sorted(result.keys()) if isinstance(result, dict) else None
+    result_count = len(result) if isinstance(result, (list, tuple)) else None
+    logger.info(
+        "Tool completed name=%s result_type=%s result_keys=%s result_count=%s error=%s duration_ms=%.1f",
+        function_name,
+        type(result).__name__,
+        result_keys,
+        result_count,
+        isinstance(result, dict) and "error" in result,
+        (perf_counter() - started_at) * 1000,
+    )
+    return result
+
+
+def _execute_tool(function_name, arguments, messages, context):
 
     if function_name == "get_pokemon":
         name = arguments["name"]
-        print(f"[Using Pokémon database: {name}]")
+        logger.info("Looking up Pokémon data")
         result = get_pokemon(name)
 
         if result is None:
@@ -302,7 +422,7 @@ def execute_tool(function_name, arguments, messages, context):
 
         question = arguments["question"]
 
-        print("[Searching knowledge base]")
+        logger.info("Searching local knowledge base")
 
         return search_knowledge(question)
 
@@ -311,9 +431,10 @@ def execute_tool(function_name, arguments, messages, context):
 
         query = arguments["query"]
 
-        print(f"[Searching web: {query}]")
+        logger.info("Searching web")
 
         results = web_search(query)
+        logger.info("Web search completed result_count=%d", len(results))
 
         # Ask Qwen to choose the best source.
         selection_messages = messages.copy()
@@ -331,10 +452,7 @@ Do not answer the user's question.
 """
         })
 
-        selection_response = chat(
-            model="qwen3:4b",
-            messages=selection_messages
-        )
+        selection_response = call_model("web source selection", selection_messages)
 
         selected_url = (
             selection_response.message.content
@@ -343,7 +461,10 @@ Do not answer the user's question.
             .strip()
         )
 
-        print(f"[Reading webpage: {selected_url}]")
+        logger.info(
+            "Fetching selected webpage host=%s",
+            urlparse(selected_url).hostname or "unknown",
+        )
 
         try:
 
@@ -356,6 +477,7 @@ Do not answer the user's question.
             }
 
         except Exception as error:
+            logger.exception("Selected webpage fetch failed")
 
             return {
                 "search_results": results,
@@ -368,12 +490,13 @@ Do not answer the user's question.
 
         url = arguments["url"]
 
-        print(f"[Reading webpage: {url}]")
+        logger.info("Fetching requested webpage host=%s", urlparse(url).hostname or "unknown")
 
         try:
             return fetch_web_page(url)
 
         except Exception as error:
+            logger.exception("Requested webpage fetch failed")
 
             return {
                 "error": str(error)
@@ -384,7 +507,7 @@ Do not answer the user's question.
 
         name = arguments["name"]
 
-        print(f"[Generating character sheet: {name}]")
+        logger.info("Generating Pokémon character sheet")
 
         result = get_pokemon_character_sheet(name)
 
@@ -406,7 +529,7 @@ Do not answer the user's question.
 
     elif function_name == "analyze_team_coverage":
         pokemon_names = arguments["pokemon_names"]
-        print(f"[Analyzing team coverage for: {pokemon_names}]")
+        logger.info("Analyzing team coverage member_count=%d", len(pokemon_names))
         result = analyze_team_coverage(pokemon_names)
         
         if "error" not in result:
@@ -420,7 +543,7 @@ Do not answer the user's question.
         pokemon1 = arguments["pokemon1"]
         pokemon2 = arguments["pokemon2"]
 
-        print(f"[Simulating battle: {pokemon1} vs {pokemon2}]")
+        logger.info("Simulating battle")
 
         result = simulate_battle(pokemon1, pokemon2)
 
@@ -435,11 +558,41 @@ Do not answer the user's question.
     }
 
 
+def call_model(stage, messages, tools=None):
+    started_at = perf_counter()
+    logger.info(
+        "Ollama call started stage=%s model=qwen3:4b message_count=%d tools_enabled=%s",
+        stage,
+        len(messages),
+        tools is not None,
+    )
+    try:
+        response = chat(model="qwen3:4b", messages=messages, **({"tools": tools} if tools is not None else {}))
+    except Exception:
+        logger.exception(
+            "Ollama call failed stage=%s duration_ms=%.1f",
+            stage,
+            (perf_counter() - started_at) * 1000,
+        )
+        raise
+
+    tool_calls = getattr(response.message, "tool_calls", None) or []
+    content = getattr(response.message, "content", None) or ""
+    logger.info(
+        "Ollama call completed stage=%s tool_call_count=%d response_chars=%d duration_ms=%.1f",
+        stage,
+        len(tool_calls),
+        len(content),
+        (perf_counter() - started_at) * 1000,
+    )
+    return response
+
+
 # --------------------------------------------------
 # Generate final answer
 # --------------------------------------------------
 
-def generate_final_answer(messages):
+def generate_final_answer(messages, additional_instruction=None):
 
     final_messages = messages.copy()
 
@@ -472,10 +625,13 @@ Return only the natural answer that should be shown to the user.
 """
     })
 
-    return chat(
-        model="qwen3:4b",
-        messages=final_messages
-    )
+    if additional_instruction:
+        final_messages.append({
+            "role": "system",
+            "content": additional_instruction
+        })
+
+    return call_model("final answer synthesis", final_messages)
 
 
 # --------------------------------------------------
@@ -484,6 +640,13 @@ Return only the natural answer that should be shown to the user.
 
 @app.post("/chat")
 def chat_endpoint(request: ChatRequest):
+    started_at = perf_counter()
+    logger.info(
+        "Chat request received message_chars=%d history_turns=%d development_mode=%s",
+        len(request.message),
+        len(request.history),
+        DEVELOPMENT_MODE,
+    )
 
     # --------------------------------------------------
     # Development mode
@@ -493,6 +656,7 @@ def chat_endpoint(request: ChatRequest):
 
         # Simulate AI processing time
         time.sleep(5)
+        logger.info("Development-mode chat response ready")
 
         return {
             "response": "Development mode: /chat endpoint is working correctly. Pika Pikaaa!"
@@ -522,24 +686,27 @@ def chat_endpoint(request: ChatRequest):
         "role": "user",
         "content": request.message
     })
+    logger.info("Conversation assembled message_count=%d", len(messages))
 
 
     # --------------------------------------------------
     # Tool loop
     # --------------------------------------------------
 
-    response = chat(
-        model="qwen3:4b",
-        messages=messages,
-        tools=tools
-    )
+    response = call_model("initial response", messages, tools)
 
     messages.append(response.message)
 
-
     context = {}
+    tool_round = 0
 
     while response.message.tool_calls:
+        tool_round += 1
+        logger.info(
+            "Tool round started round=%d tool_call_count=%d",
+            tool_round,
+            len(response.message.tool_calls),
+        )
 
         for tool_call in response.message.tool_calls:
 
@@ -558,12 +725,8 @@ def chat_endpoint(request: ChatRequest):
                 "content": str(result)
             })
 
-
-        response = chat(
-            model="qwen3:4b",
-            messages=messages,
-            tools=tools
-        )
+        logger.info("Tool round completed round=%d message_count=%d", tool_round, len(messages))
+        response = call_model(f"tool round {tool_round}", messages, tools)
 
         messages.append(response.message)
 
@@ -572,8 +735,27 @@ def chat_endpoint(request: ChatRequest):
     # Final synthesis
     # --------------------------------------------------
 
-    final_response = generate_final_answer(messages)
+    is_battle = context.get("response_category") == "battle_simulation"
+    battle_instruction = None
+    if is_battle:
+        battle_instruction = (
+            "This is a battle simulation. Do not display narration, explanations, "
+            "move descriptions, or any other text. Respond with only this exact "
+            "sentence, replacing the placeholders with the two Pokémon names from "
+            "the battle data: 'Here is a battle simulation between <pokemon> and "
+            "<pokemon>!'"
+        )
+
+    final_response = generate_final_answer(messages, battle_instruction)
     final_text = final_response.message.content
+    logger.info("Final answer generated response_chars=%d", len(final_text))
+
+    if is_battle:
+        battle_data = context["battle_data"]
+        pokemon_one = battle_data["player_one"]["name"].replace("-", " ").title()
+        pokemon_two = battle_data["player_two"]["name"].replace("-", " ").title()
+        final_text = f"Here is a battle simulation between {pokemon_one} and {pokemon_two}!"
+        logger.info("Battle response constrained to intro sentence")
 
     result = {
         "response": final_text
@@ -588,7 +770,7 @@ def chat_endpoint(request: ChatRequest):
             
         elif context["response_category"] == "team_analysis":
             # Extract the full final team (inputs + suggestions)
-            print("[Extracting full final team for SVGs...]")
+            logger.info("Extracting final team members for sprite display")
             extraction_messages = [
                 {
                     "role": "system",
@@ -605,8 +787,9 @@ def chat_endpoint(request: ChatRequest):
                 }
             ]
             
-            extracted = chat(model="qwen3:4b", messages=extraction_messages)
+            extracted = call_model("team member extraction", extraction_messages)
             final_names = [n.strip() for n in extracted.message.content.split(",") if n.strip()]
+            logger.info("Final team extraction completed member_count=%d", len(final_names))
             
             full_team_sprites = []
             for n in final_names:
@@ -616,8 +799,9 @@ def chat_endpoint(request: ChatRequest):
                         "name": p["name"],
                         "showdown_sprite": p["showdown_sprite"]
                     })
-            
+
             result["team_sprites"] = full_team_sprites
+            logger.info("Final team sprites assembled sprite_count=%d", len(full_team_sprites))
 
         elif context["response_category"] == "battle_simulation":
             result["battle_data"] = context.get("battle_data")
@@ -629,4 +813,10 @@ def chat_endpoint(request: ChatRequest):
     else:
         result["type"] = "standard_chat"
 
+    logger.info(
+        "Chat request completed response_type=%s response_chars=%d duration_ms=%.1f",
+        result["type"],
+        len(final_text),
+        (perf_counter() - started_at) * 1000,
+    )
     return result

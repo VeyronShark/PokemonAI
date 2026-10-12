@@ -30,12 +30,181 @@ function addImage(container, url, alt, className) {
   const safeUrl = safeImageUrl(url);
   if (!safeUrl) return null;
   const image = element("img", className);
-  image.src = safeUrl;
+  const parsedUrl = new URL(safeUrl);
+  const isPokemonSprite = parsedUrl.hostname === "raw.githubusercontent.com"
+    && parsedUrl.pathname.startsWith("/PokeAPI/sprites/master/sprites/pokemon/");
+  image.src = isPokemonSprite
+    ? `/sprite?url=${encodeURIComponent(parsedUrl.href)}`
+    : safeUrl;
   image.alt = alt;
   image.loading = "lazy";
   image.addEventListener("error", () => image.remove(), { once: true });
   container.append(image);
   return image;
+}
+
+function cropTransparentSprite(image) {
+  if (!image.naturalWidth || !image.naturalHeight || !image.isConnected) return;
+
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return;
+    context.drawImage(image, 0, 0);
+
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    let left = canvas.width;
+    let top = canvas.height;
+    let right = -1;
+    let bottom = -1;
+    for (let y = 0; y < canvas.height; y += 1) {
+      for (let x = 0; x < canvas.width; x += 1) {
+        if (data[(y * canvas.width + x) * 4 + 3] === 0) continue;
+        left = Math.min(left, x);
+        top = Math.min(top, y);
+        right = Math.max(right, x);
+        bottom = Math.max(bottom, y);
+      }
+    }
+    if (right < left || bottom < top) return;
+
+    const frame = element("span", "battle-sprite-frame");
+    frame.style.width = `${right - left + 1}px`;
+    frame.style.height = `${bottom - top + 1}px`;
+    frame.setAttribute("role", "img");
+    frame.setAttribute("aria-label", image.alt);
+    image.alt = "";
+    image.style.width = `${canvas.width}px`;
+    image.style.height = `${canvas.height}px`;
+    image.style.left = `${-left}px`;
+    image.style.top = `${-top}px`;
+    image.replaceWith(frame);
+    frame.append(image);
+  } catch (error) {
+    console.warn("Could not crop transparent Pokémon sprite margins.", error);
+  }
+}
+
+function addBattleSprite(container, url, alt) {
+  const image = addImage(container, url, alt, "battle-sprite");
+  if (!image) return;
+  if (image.complete) cropTransparentSprite(image);
+  else image.addEventListener("load", () => cropTransparentSprite(image), { once: true });
+}
+
+function appendInlineMarkdown(parent, text) {
+  const tokenPattern = /(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|`([^`]+)`|\*\*([^*]+)\*\*|__([^_]+)__|~~([^~]+)~~|\*([^*]+)\*|_([^_]+)_)/g;
+  let lastIndex = 0;
+  for (const match of text.matchAll(tokenPattern)) {
+    const index = match.index ?? 0;
+    parent.append(document.createTextNode(text.slice(lastIndex, index)));
+    let node;
+    if (match[2] && match[3]) {
+      const linkUrl = safeImageUrl(match[3]);
+      if (linkUrl) {
+        node = element("a", "", match[2]);
+        node.href = linkUrl;
+        node.target = "_blank";
+        node.rel = "noopener noreferrer";
+      }
+    } else if (match[4] !== undefined) {
+      node = element("code", "", match[4]);
+    } else if (match[5] !== undefined || match[6] !== undefined) {
+      node = element("strong", "", match[5] ?? match[6]);
+    } else if (match[7] !== undefined) {
+      node = element("del", "", match[7]);
+    } else if (match[8] !== undefined || match[9] !== undefined) {
+      node = element("em", "", match[8] ?? match[9]);
+    }
+    parent.append(node || document.createTextNode(match[0]));
+    lastIndex = index + match[0].length;
+  }
+  parent.append(document.createTextNode(text.slice(lastIndex)));
+}
+
+function renderMarkdown(markdown) {
+  const fragment = document.createDocumentFragment();
+  const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!line.trim()) {
+      index += 1;
+      continue;
+    }
+
+    if (/^\s*```/.test(line)) {
+      const codeLines = [];
+      index += 1;
+      while (index < lines.length && !/^\s*```/.test(lines[index])) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length) index += 1;
+      const pre = element("pre");
+      pre.append(element("code", "", codeLines.join("\n")));
+      fragment.append(pre);
+      continue;
+    }
+
+    const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (heading) {
+      const node = element(`h${heading[1].length}`);
+      appendInlineMarkdown(node, heading[2]);
+      fragment.append(node);
+      index += 1;
+      continue;
+    }
+
+    if (/^\s{0,3}(---+|___+|\*\*\*+)\s*$/.test(line)) {
+      fragment.append(element("hr"));
+      index += 1;
+      continue;
+    }
+
+    const listMatch = line.match(/^\s*(?:[-*+]|\d+[.)])\s+(.+)$/);
+    if (listMatch) {
+      const ordered = /^\s*\d/.test(line);
+      const list = element(ordered ? "ol" : "ul");
+      while (index < lines.length) {
+        const itemMatch = lines[index].match(/^\s*(?:[-*+]|\d+[.)])\s+(.+)$/);
+        if (!itemMatch || /^\s*\d/.test(lines[index]) !== ordered) break;
+        const item = element("li");
+        appendInlineMarkdown(item, itemMatch[1]);
+        list.append(item);
+        index += 1;
+      }
+      fragment.append(list);
+      continue;
+    }
+
+    const quote = line.match(/^\s{0,3}>\s?(.*)$/);
+    if (quote) {
+      const blockquote = element("blockquote");
+      appendInlineMarkdown(blockquote, quote[1]);
+      fragment.append(blockquote);
+      index += 1;
+      continue;
+    }
+
+    const paragraphLines = [line.trim()];
+    index += 1;
+    while (index < lines.length && lines[index].trim()
+      && !/^\s*```/.test(lines[index])
+      && !/^\s{0,3}#{1,6}\s+/.test(lines[index])
+      && !/^\s*(?:[-*+]|\d+[.)])\s+/.test(lines[index])
+      && !/^\s{0,3}>/.test(lines[index])
+      && !/^\s{0,3}(---+|___+|\*\*\*+)\s*$/.test(lines[index])) {
+      paragraphLines.push(lines[index].trim());
+      index += 1;
+    }
+    const paragraph = element("p");
+    appendInlineMarkdown(paragraph, paragraphLines.join("\n"));
+    fragment.append(paragraph);
+  }
+  return fragment;
 }
 
 function renderTeam(container, team) {
@@ -105,36 +274,102 @@ function renderBattle(container, data) {
   const card = element("div", "result-card");
   const row = element("div", "battle-row");
   const players = [data.player_one, data.player_two];
+  const fighters = [];
   players.forEach((player, index) => {
     if (!player || typeof player !== "object") return;
     const side = element("div", "battle-side");
     const spriteUrl = index === 0 ? player.back_sprite : player.front_sprite;
-    addImage(side, spriteUrl, `${player.name || "Pokémon"} battle sprite`);
+    addBattleSprite(side, spriteUrl, `${player.name || "Pokémon"} battle sprite`);
     side.append(element("h3", "", String(player.name || `Player ${index + 1}`)));
     const maxHp = Number(player.max_hp);
-    if (Number.isFinite(maxHp) && maxHp > 0) {
-      const label = element("div", "hp-label");
-      label.append(element("span", "", "Max HP"));
-      label.append(element("span", "", String(maxHp)));
-      side.append(label);
-      const track = element("div", "hp-track");
-      const fill = element("div", "hp-fill");
-      fill.style.width = "100%";
-      track.append(fill);
-      side.append(track);
-    }
+    const label = element("div", "hp-label");
+    label.append(element("span", "", "HP"));
+    const hpValue = element("span", "", String(Number.isFinite(maxHp) ? maxHp : 0));
+    label.append(hpValue);
+    side.append(label);
+    const track = element("div", "hp-track");
+    const fill = element("div", "hp-fill");
+    track.append(fill);
+    side.append(track);
+
+    const maxDamage = Array.isArray(player.moves)
+      ? Math.max(0, ...player.moves.map((move) => Number(move?.damage_to_opponent) || 0))
+      : 0;
     if (Array.isArray(player.moves)) {
       const moves = element("div", "move-list");
       player.moves.forEach((move) => {
-        if (move?.name) moves.append(element("span", "move", String(move.name)));
+        if (move?.name) {
+          const damage = Number(move.damage_to_opponent);
+          const moveLabel = Number.isFinite(damage)
+            ? `${move.name} · ${damage} dmg`
+            : String(move.name);
+          moves.append(element("span", "move", moveLabel));
+        }
       });
       side.append(moves);
     }
+    fighters.push({
+      name: String(player.name || `Player ${index + 1}`),
+      currentHp: Number.isFinite(maxHp) && maxHp > 0 ? maxHp : 0,
+      maxHp: Number.isFinite(maxHp) && maxHp > 0 ? maxHp : 0,
+      maxDamage,
+      hpValue,
+      hpFill: fill,
+    });
     row.append(side);
     if (index === 0) row.append(element("span", "battle-vs", "VS"));
   });
   if (row.childElementCount) {
     card.append(row);
+
+    const status = element("p", "battle-status", "Ready when you are.");
+    status.setAttribute("aria-live", "polite");
+    const startButton = element("button", "battle-start", "Start battle");
+    startButton.type = "button";
+    const canBattle = fighters.length === 2
+      && fighters.every((fighter) => fighter.maxHp > 0 && fighter.maxDamage > 0);
+    startButton.disabled = !canBattle;
+    if (!canBattle) status.textContent = "Battle data is missing valid HP or attack damage.";
+
+    let intervalId;
+    const updateHealth = (fighter) => {
+      fighter.hpValue.textContent = String(fighter.currentHp);
+      fighter.hpFill.style.width = `${fighter.currentHp / fighter.maxHp * 100}%`;
+      fighter.hpFill.classList.toggle("hp-low", fighter.currentHp / fighter.maxHp <= 0.25);
+    };
+    fighters.forEach(updateHealth);
+
+    startButton.addEventListener("click", () => {
+      if (!canBattle || intervalId) return;
+      startButton.disabled = true;
+      startButton.textContent = "Battle in progress";
+      status.textContent = "Battle started!";
+
+      intervalId = window.setInterval(() => {
+        const [first, second] = fighters;
+        first.currentHp = Math.max(0, first.currentHp - second.maxDamage);
+        second.currentHp = Math.max(0, second.currentHp - first.maxDamage);
+        fighters.forEach(updateHealth);
+
+        const firstFainted = first.currentHp === 0;
+        const secondFainted = second.currentHp === 0;
+        if (!firstFainted && !secondFainted) {
+          status.textContent = "Battle in progress...";
+          return;
+        }
+
+        window.clearInterval(intervalId);
+        intervalId = undefined;
+        startButton.textContent = "Battle complete";
+        status.textContent = firstFainted && secondFainted
+          ? "It's a draw! Both Pokémon fainted."
+          : `${firstFainted ? second.name : first.name} wins!`;
+      }, 1500);
+    });
+
+    const controls = element("div", "battle-controls");
+    controls.append(status, startButton);
+    card.append(controls);
     container.append(card);
   }
 }
@@ -162,7 +397,10 @@ function addMessage(role, text, responseData) {
   avatar.setAttribute("aria-hidden", "true");
   const body = element("div", "message-body");
   body.append(element("p", "message-label", role === "user" ? "You" : "Poké AI"));
-  body.append(element("div", "bubble", text));
+  const bubble = element("div", role === "assistant" ? "bubble markdown-body" : "bubble");
+  if (role === "assistant") bubble.append(renderMarkdown(text));
+  else bubble.textContent = text;
+  body.append(bubble);
   if (responseData) renderResponseExtras(body, responseData);
   message.append(avatar, body);
   conversation.append(message);
